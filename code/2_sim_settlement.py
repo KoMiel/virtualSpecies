@@ -1,51 +1,103 @@
 
-
-### import packages ###
+# import packages
 
 import json
 import numpy as np
 import os
 
-from landscape import landscape
-from settlement import settlement
+from landscape import Landscape
+from settlement import Settlement
+
+from joblib import Parallel, delayed
 
 
-### import settings ###
+# function for parallel computing
+
+def parallel_settlements(grid):
+    
+    # generate a random seed, use it and store it
+    
+    random_seed = round(np.random.random()*1000000)
+    np.random.seed(random_seed)
+    file_seed = open(directorySettlements + subpath + 'randomSeeds.txt','a')
+    file_seed.write(str(scenario['interactionW']) + "," + str(grid) + "," + str(random_seed) + '\n')
+    file_seed.close()
+    
+    # read the previously generated landscape object (the grid)
+    
+    lscape = Landscape()
+    lscape.pkl_import(path=directoryLandscapes + 'landscape' + str(grid) + '.pkl')
+        
+    # start with an empty list of distributions
+    
+    settlements = []
+    
+    # loop over multiple distributions
+    
+    for distribution in range(0, nDistributions):
+    
+        # print message to keep track of the progress
+                       
+        print("Generating settlement " + str(distribution) + " on grid " + str(grid))
+    
+        # sample the random number of individuals
+
+        if nIndividualsMin < nIndividualsMax:
+            n_individuals = np.random.randint(low=nIndividualsMin, high=nIndividualsMax)
+        else:
+            n_individuals = nIndividualsMin
+
+        # new settlement object
+
+        settlements.append(Settlement(interaction_w=interactionW, landscape=lscape))
+        
+        # set the response of the species to the different variables
+        
+        for index, label in enumerate(varLabel):
+            settlements[distribution].set_weight(label=label, weight=varWeight[index])
+               
+        # place the individuals in the grid using gibbs sampling
+        
+        settlements[distribution].gibbs(n_individuals=n_individuals, n_iterations=n_individuals * nSelections)
+
+        # save the distribution
+
+        settlements[distribution].export_to_pkl(path=directorySettlements + subpath + 'settlement' + str(grid)
+                                                       + '_' + str(distribution) + ".pkl")
+
+
+# import settings
 
 with open('../settings.json') as f:
     settings = json.load(f)
 
-# read general settings
+# extract general settings
 
 directoryLandscapes = settings['directory']['landscapes']
 directorySettlements = settings['directory']['settlements']
 
-gridNum = settings['grid']['num']
-yearsNum = settings['years']
+nGrid = settings['grid']['n']
+nDistributions = settings['nDistributions']
 
-
-### import scenarios ###
+# import scenarios
 
 with open('../scenarios.json') as f:
     scenarios = json.load(f)
 
+# main program
 
-### main program ###
+nCores = settings['nCores']
 
 # loop over all scenarios
 
 for scenario in scenarios['scenarios']:
 
-    # generate list to store randomSeeds
-    
-    randomSeeds = list()
-
-    # generate lists to read information on variables
+    # generate lists to store information on variables
        
     varLabel = list()
     varWeight = list()
     
-    # read information on variables (species response to them)
+    # extract information on variables (species' response to them)
     
     for variable in settings['var']:
         varLabel.append(settings['var'][variable]['label'])
@@ -55,66 +107,22 @@ for scenario in scenarios['scenarios']:
     
     # read the range from which the number of individuals is generated
     
-    birdsNumMin = scenario['birdsNumMin']
-    birdsNumMax = scenario['birdsNumMax']
+    nIndividualsMin = scenario['nIndividualsMin']
+    nIndividualsMax = scenario['nIndividualsMax']
         
-    # read the subpath to the scenario worked on
+    # extract the subpath to the scenario worked on
 
     subpath = scenario['path']
+
+    # extract the number individuals are allowed to choose new sites
+
+    nSelections = scenario['nSelections']
     
     # generate a directory for the scenario if it did not already exist
     
     if not os.path.exists(directorySettlements + subpath):
         os.makedirs(directorySettlements + subpath)
             
-    # loop over all previously generated grids
+    # loop over all grids and perform parallel settlements
     
-    for grid in range(0,gridNum):
-        
-        # generate a random seed and append it to the list
-        
-        randomSeed = np.random.randint(1000000)
-        np.random.seed(randomSeed)
-        randomSeeds.append(randomSeed)
-
-        # read the previously generated landscape object (the grid)
-        
-        lscape = landscape()
-        lscape.pkl_import(path = directoryLandscapes + 'landscape' + str(grid) + '.pkl')
-            
-        # start with an empty list of distributions
-        
-        settlements = []
-        
-        # loop over multiple distributions (called year here, but could be any time delay between observations)
-        
-        for year in range(0,yearsNum):
-
-            # print message to keep track of the progress
-                           
-            print("Executing settlement on grid " + str(grid) + ", settlement " + str(year))
-        
-            # sample the random number of individuals (called birds here, but, again, could be other species, too) and initialize a new distribution
-            
-            birdsNum = np.random.randint(low = birdsNumMin, high = birdsNumMax)
-            settlements.append(settlement(interactionW = interactionW, landscape = lscape))
-            
-            # set the response of the species to the different variables
-            
-            for index, label in enumerate(varLabel):
-                settlements[year].set_weight(label = label, weight = varWeight[index])
-                   
-            # place the individuals in the grid using gibbs sampling
-            
-            settlements[year].gibbs(birdsNum = birdsNum, itNum = birdsNum * 10)
-                
-            # save the distribution
-            
-            settlements[year].export_to_pkl(path = directorySettlements + subpath + 'settlement' + str(grid) + '_' + str(year) + ".pkl")        
-
-    # store the random seeds
-    f = open(directorySettlements + subpath + 'randomSeeds.txt','w')
-    
-    for line in randomSeeds:
-        f.write(str(line) + '\n')
-    f.close()
+    results = Parallel(n_jobs=nCores)(delayed(parallel_settlements)(grid) for grid in range(0, nGrid))

@@ -1,6 +1,5 @@
 
-
-### import packages ###
+# import packages
 
 import joblib as jl
 import pandas as pd
@@ -8,18 +7,18 @@ import numpy as np
 
 from functionalities import check_position_validity, distance_function, zeros_array
 
+####################
+# settlement class #
+####################
 
-########################
-### settlement class ###
-########################
 
-class settlement:
+class Settlement:
     
     # initialization function
     
     def __init__(self,
                  landscape,
-                 interactionW = 0):
+                 interaction_w=0):
 
         # import the landscape
         
@@ -32,15 +31,13 @@ class settlement:
 
         # generate an empty data structure for the locations of the individuals
 
-        self.data["Bird locations"] = []
+        self.data["Presence locations"] = []
 
         # generate an empty array for conspecific interaction and set the corresponding weight
 
         array = zeros_array(self.landscape.size)
         self.data["Conspecific interaction"] = array.copy()
-        
-        self.weights["Conspecific interaction"] = interactionW
-        
+        self.weights["Conspecific interaction"] = interaction_w
         
     # function to set variable slopes (determines the response of individuals to different habitat factors)
     
@@ -49,30 +46,27 @@ class settlement:
                    weight):
         
         self.weights[label] = weight
-        self.calc_probs()
 
-
-    # function that executes a sequential settlement
+    # function that performs a sequential settlement
     
     def sequential(self,
-                   birdsNum):
+                   n_individuals):
 
         # place the required number of individuals, updating the settlement probabilities after each one
         
-        for i in range(0, birdsNum):
-            self.calc_probs()
-            self.settle_bird()
+        for i in range(0, n_individuals):
+            self.update_probabilities()
+            self.place_individual()
 
         # generate a list of all empty positions
         
         self.empty_habitat()
-      
 
     # function to update the conspecific interaction array if a new individual is placed in the landscape
     
     def add_interaction(self,
-                        posX,
-                        posY):
+                        pos_x,
+                        pos_y):
         
         # loop over all positions that are potentially relevant
         
@@ -81,113 +75,120 @@ class settlement:
                 
                 # check whether the position is actually on the grid
                 
-                if (check_position_validity(size = self.landscape.size, x = x + posX, y = y + posY) == 0):
+                if check_position_validity(size=self.landscape.size, x=x + pos_x, y=y + pos_y) == 0:
                     
                     # add the conspecific interaction contribution
                     
-                    self.data["Conspecific interaction"][x + posX][y + posY] += distance_function(x = x, y = y)
+                    self.data["Conspecific interaction"][x + pos_x][y + pos_y] += distance_function(x=x, y=y)
 
-
-    # function to update conspecific interaction if an individual is removed from the landscape (exactly the opposite of the add-function, comments see above)
+    # function to update conspecific interaction if an individual is removed from the landscape
+    # (exactly the opposite of the add-function, comments see above)
     
     def remove_interaction(self,
-                           posX,
-                           posY):
+                           pos_x,
+                           pos_y):
 
         for x in range(- self.landscape.size, self.landscape.size + 1):
             for y in range(- self.landscape.size, self.landscape.size + 1):
                 
-                if (check_position_validity(size = self.landscape.size, x = x + posX, y = y + posY) == 0):
-                    self.data["Conspecific interaction"][x + posX][y + posY] -= distance_function(x = x, y = y)
+                if check_position_validity(size = self.landscape.size, x=x + pos_x, y=y + pos_y) == 0:
 
+                    self.data["Conspecific interaction"][x + pos_x][y + pos_y] -= distance_function(x=x, y=y)
 
-    # function to choose a settlement location for a single individual
+    # function to select a settlement location for a single individual (with random component)
 
-    def settle_bird(self):
+    def place_individual(self):
         
         # calculate the sum of all settlement probabilities in y-direction to choose a spot at random below
         
-        probSum = np.sum(self.data["Settlement probability"], axis = 0)
+        probability_sum = np.sum(self.data["Settlement probability"], axis=0)
 
         # choose one spot randomly (according to probabilities, consecutively select y and x-coordinates)
         
-        posY = np.random.choice(a = self.landscape.size, p = probSum/sum(probSum))
-        posX = np.random.choice(a = len(self.data["Settlement probability"][:,posY]), p = self.data["Settlement probability"][:,posY]/sum(self.data["Settlement probability"][:,posY]))
+        pos_y = np.random.choice(a=self.landscape.size, p=probability_sum/sum(probability_sum))
+        pos_x = np.random.choice(a=len(self.data["Settlement probability"][:, pos_y]),
+                                 p=self.data["Settlement probability"][:, pos_y]/sum(self.data["Settlement probability"]
+                                                                                     [:, pos_y]))
         
         # add individual to the grid, save the location
         
-        self.data["Bird locations"].append([posX, posY])
-        
+        self.data["Presence locations"].append([pos_x, pos_y])
+
         # update the conspecific interaction
         
-        self.add_interaction(posX = posX, posY = posY)
+        self.add_interaction(pos_x=pos_x, pos_y=pos_y)
 
+    # function to calculate the settlement probabilities taking into account
+    # both conspecific interaction and landscape characteristics
 
-    # function to calculate the settlement probabilities from both conspecific interaction and landscape characteristics
-                
-    def calc_probs(self):
+    def update_probabilities(self):
 
         # generate an array to store the probabilities
 
         array = np.ones((self.landscape.size, self.landscape.size))
 
-        # all positions with an individual can't be chosen again. So set their probabilities to 0
+        # all positions with an individual can't be chosen again. So we set their probabilities to 0 from the start
         
-        if len(self.data["Bird locations"]) > 0:
-            array[np.array(self.data["Bird locations"])[:,0], np.array(self.data["Bird locations"])[:,1]] = 0
-            
+        if len(self.data["Presence locations"]) > 0:
+            array[np.array(self.data["Presence locations"])[:, 0], np.array(self.data["Presence locations"])[:, 1]] = 0
+
+        # also exclude unsuitable cells
+
         array[self.landscape.data["Unsuitable cells"] == 0] = 0
         
-        # calculate the landscape quality
+        # calculate the landscape quality, by looping over all relevant factors and summing their influence
         
-        for k in self.weights.index[:]: #by looping over all relevant factors and summing their influence
+        for k in self.weights.index[:]:
 
-            if (k == "Conspecific interaction"): #this is the specific case of conspecific interaction
+            # conspecific interaction
+
+            if k == "Conspecific interaction":
                 array *= np.exp(self.data[k] * self.weights[k])
-            else: #all others are habitat factors
-                array *= np.exp(self.landscape.data[k] * self.weights[k])                            
+
+            # all habitat factors
+            else:
+                array *= np.exp(self.landscape.data[k] * self.weights[k])
 
         # convert the landscape quality to probabilities and store
-        
+
         array /= array.sum()
         self.data["Settlement probability"] = array.copy()
-            
 
-    # function that applies gibbs sampling to generate a stable distribution
-    
+    # function that performs gibbs sampling to generate a stable distribution
+
     def gibbs(self,
-              birdsNum,
-              itNum):
+              n_individuals,
+              n_iterations):
 
-        # do the sequential settlement routine first
+        # perform a sequential settlement routine first
         
-        self.sequential(birdsNum = birdsNum)
+        self.sequential(n_individuals=n_individuals)
         
         # loop over gibbs sampling steps
         
-        for it in range(itNum):
+        for it in range(n_iterations):
             
             # randomly pick an individual and remove it from the grid
             
-            num = np.random.randint(low = 0, high = birdsNum)
-            pos = self.data["Bird locations"][num]
-            del self.data["Bird locations"][num]
+            individual = np.random.randint(low=0, high=n_individuals)
+            pos = self.data["Presence locations"][individual]
+            del self.data["Presence locations"][individual]
             
             # remove its influence on other individuals
             
-            self.remove_interaction(posX = pos[0], posY = pos[1])
+            self.remove_interaction(pos_x=pos[0], pos_y=pos[1])
             
-            # recalculate the settlement probabilities and choose a pick spot where to place the individual
+            # recalculate the settlement probabilities and choose a spot where to place the individual
             
-            self.calc_probs()
-            self.settle_bird()        
+            self.update_probabilities()
+            self.place_individual()
 
         # get a list of all locations without an individual
         
         self.empty_habitat()
 
-
-    # function to compute a list of all empty spots that could potentially have been chosen (necessary as absences for the GLMM)
+    # function to compute a list of all empty spots that could potentially have been chosen
+    # (input for logistic regression)
 
     def empty_habitat(self):
 
@@ -195,12 +196,13 @@ class settlement:
         
         lst = []
 
-        #loop over all locations, if it is empty but potentially could have been filled add it to list (i.e., the completely hostile spots are left out of the list)
+        # loop over all locations, if it is empty but potentially could have been filled add it to list
+        # (i.e., the completely hostile spots are left out of the list)
         
         for x in range(self.landscape.size):
             for y in range(self.landscape.size):
                     
-                if (not [x, y] in self.data["Bird locations"] and self.landscape.data["Unsuitable cells"][x][y] > 0):
+                if not [x, y] in self.data["Presence locations"] and self.landscape.data["Unsuitable cells"][x][y] > 0:
                     lst.append([x, y])
         
         # generate an array from the list
@@ -211,7 +213,7 @@ class settlement:
         
         self.data["Empty habitat"] = array.copy()
                     
-    # function to save the distribution as a .pkl file
+    # function to save a distribution as a .pkl file
 
     def export_to_pkl(self,
                       path):
@@ -220,8 +222,7 @@ class settlement:
 
         jl.dump((self.data, self.landscape, self.weights), path)
 
-
-    # function to load the distribution from a .pkl file
+    # function to load a distribution from a .pkl file
 
     def import_from_pkl(self,
                         path):
